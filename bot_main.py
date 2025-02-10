@@ -7,6 +7,7 @@ from pytube import YouTube
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import spotipy.util as util
+import asyncio
 
 load_dotenv()
 
@@ -23,18 +24,13 @@ FFMPEG_OPTIONS = {
 
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
-    'noplaylist': True,
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
+    'noplaylist': False,
+    'quiet': True,
+    'no_warnings': True,
+    'ignoreerrors': True,
     'extractor_args': {
         'youtube': {
-            'skip': [
-                'dash',
-                'hls'
-            ]
+            'skip': ['hls', 'dash', 'translated_subs']
         }
     }
 }
@@ -42,9 +38,7 @@ YDL_OPTIONS = {
 # Inicialização de APIs
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
     client_id=os.getenv('SPOTIFY_CLIENT_ID'),
-    client_secret=os.getenv('SPOTIFY_CLIENT_SECRET')),
-    retries=3,
-    status_forcelist=[429, 500, 502, 503, 504]
+    client_secret=os.getenv('SPOTIFY_CLIENT_SECRET'))
 )
 
 # Fila de músicas por servidor
@@ -55,6 +49,7 @@ class QueueItem:
         self.queue = []
         self.repeat = False
         self.loop = False
+        self.current = None
 
 @bot.event
 async def on_ready():
@@ -75,15 +70,20 @@ async def play_next(ctx):
     
     queue = queues[ctx.guild.id]
     
-    if queue.repeat and queue.queue:
-        current = queue.queue[0]
-        queue.queue.append(current)
+    if queue.repeat and queue.current:
+        queue.queue.insert(0, queue.current)
     
     if queue.queue:
-        player = queue.queue.pop(0)
-        audio_source = player.create_player()
-        ctx.voice_client.play(audio_source, after=lambda e: bot.loop.create_task(play_next(ctx)))
-        await ctx.send(f'🎶 Tocando agora: **{player.title}**')
+        queue.current = queue.queue.pop(0)
+        audio_source = queue.current.create_player()
+        
+        def after_playing(error):
+            if error:
+                print(f'Erro na reprodução: {error}')
+            asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
+        
+        ctx.voice_client.play(audio_source, after=after_playing)
+        await ctx.send(f'🎶 Tocando agora: **{queue.current.title}**')
 
 async def process_source(ctx, url):
     voice_client = ctx.voice_client
@@ -112,21 +112,30 @@ async def process_source(ctx, url):
 
 async def process_youtube(ctx, url):
     try:
-        ydl_opts = YDL_OPTIONS.copy()
-        if 'list=' in url:
-            ydl_opts['noplaylist'] = False
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            info = await bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
             
-            if 'entries' in info:  # Playlist
-                entries = info['entries']
-                await ctx.send(f"🎵 Adicionando playlist: **{info['title']}** ({len(entries)} músicas)")
-                return [MusicSource(
-                    discord.FFmpegOpusAudio(entry['url'], **FFMPEG_OPTIONS),
-                    entry['title'],
-                    entry['webpage_url']
-                ) for entry in entries if entry]
+            if 'entries' in info:
+                entries = info['entries'][:100]
+                await ctx.send(f"🎵 Adicionando playlist: **{info.get('title', 'Sem título')}** ({len(entries)} músicas)")
+                
+                first_track = MusicSource(
+                    discord.FFmpegOpusAudio(entries[0]['url'], **FFMPEG_OPTIONS),
+                    entries[0]['title'],
+                    entries[0]['webpage_url']
+                )
+                
+                async def add_remaining():
+                    for entry in entries[1:]:
+                        track = MusicSource(
+                            discord.FFmpegOpusAudio(entry['url'], **FFMPEG_OPTIONS),
+                            entry['title'],
+                            entry['webpage_url']
+                        )
+                        queues[ctx.guild.id].queue.append(track)
+                
+                asyncio.create_task(add_remaining())
+                return [first_track]
             
             return MusicSource(
                 discord.FFmpegOpusAudio(info['url'], **FFMPEG_OPTIONS),
@@ -213,10 +222,10 @@ async def play(ctx, *, url):
             await ctx.send("Fonte de áudio não suportada!")
             return
             
-        if isinstance(result, list):  # Playlist
+        if isinstance(result, list):
             queues[ctx.guild.id].queue.extend(result)
             await ctx.send(f"✅ {len(result)} músicas adicionadas à fila!")
-        else:  # Música única
+        else:
             queues[ctx.guild.id].queue.append(result)
             await ctx.send(f"✅ **{result.title}** adicionada à fila!")
         
@@ -250,12 +259,14 @@ async def skip(ctx):
 
 @bot.command()
 async def queue(ctx):
-    if not queues.get(ctx.guild.id):
-        await ctx.send("A fila está vazia!")
-        return
+    if ctx.guild.id not in queues or not queues[ctx.guild.id].queue:
+        return await ctx.send("A fila está vazia!")
     
-    queue_list = [f"{i+1}. {item.title}" for i, item in enumerate(queues[ctx.guild.id])]
-    await ctx.send("**Fila de reprodução:**\n" + "\n".join(queue_list))
+    queue = queues[ctx.guild.id]
+    items = [f"**Agora tocando:** {queue.current.title}"] if queue.current else []
+    items += [f"**{i+1}.** {item.title}" for i, item in enumerate(queue.queue[:10])]
+    
+    await ctx.send("**Fila de reprodução:**\n" + "\n".join(items))
 
 @bot.command()
 async def repeat(ctx):
@@ -263,18 +274,16 @@ async def repeat(ctx):
         queues[ctx.guild.id] = QueueItem()
     
     queues[ctx.guild.id].repeat = not queues[ctx.guild.id].repeat
-    await ctx.send(f"🔂 Repeat {'ativado' if queues[ctx.guild.id].repeat else 'desativado'}")
+    status = 'ativado' if queues[ctx.guild.id].repeat else 'desativado'
+    await ctx.send(f"🔂 Repeat {status}")
 
 @bot.command()
 async def shuffle(ctx):
     if ctx.guild.id not in queues or len(queues[ctx.guild.id].queue) < 2:
-        await ctx.send("Não há músicas suficientes para embaralhar!")
-        return
+        return await ctx.send("Não há músicas suficientes para embaralhar!")
     
     import random
-    current = queues[ctx.guild.id].queue.pop(0)
     random.shuffle(queues[ctx.guild.id].queue)
-    queues[ctx.guild.id].queue.insert(0, current)
     await ctx.send("🔀 Fila embaralhada com sucesso!")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
