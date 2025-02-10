@@ -1,7 +1,7 @@
 # Angel Tunes
 <div style="text-align: center">
     <img src="resources/mih.png"/>
-    YouTube, Spotify e até arquivos locais. Angel Tunes toca musica de qualquer lugar.
+    <p>YouTube, Spotify e até arquivos locais. Angel Tunes toca musica de qualquer lugar.</p>
 </div>
 
 ## Variáveis de Ambiente
