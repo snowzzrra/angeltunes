@@ -54,5 +54,5 @@ python bot_main.py
 ## Autores
 
 - [Guilherme Paim Motta](https://github.com/snowzzrra)
-- Sarah
+- [Sarah Silva Andrade](https://github.com/sarahsandrade)
 
