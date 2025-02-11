@@ -248,7 +248,7 @@ async def resume(ctx):
 @bot.command()
 async def stop(ctx):
     ctx.voice_client.stop()
-    queues[ctx.guild.id] = []
+    queues[ctx.guild.id].queue.clear() 
     await ctx.send("⏹️ Parado e limpou a fila")
 
 @bot.command()
