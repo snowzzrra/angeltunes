@@ -83,7 +83,7 @@ async def play_next(ctx):
             asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
         
         ctx.voice_client.play(audio_source, after=after_playing)
-        await ctx.send(f'🎶 Tocando agora: **{queue.current.title}**')
+        #await ctx.send(f'🎶 Tocando agora: **{queue.current.title}**')
 
 async def process_source(ctx, url):
     voice_client = ctx.voice_client
@@ -250,6 +250,14 @@ async def stop(ctx):
     ctx.voice_client.stop()
     queues[ctx.guild.id].queue.clear() 
     await ctx.send("⏹️ Parado e limpou a fila")
+    
+@bot.command()
+async def clear(ctx):
+    if ctx.guild.id not in queues:
+        return await ctx.send("A fila já está vazia!")
+    queues[ctx.guild.id].queue.clear()
+    await ctx.send("A fila foi limpa")
+
 
 @bot.command()
 async def skip(ctx):
