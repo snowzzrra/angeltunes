@@ -46,10 +46,8 @@ python bot_main.py
 
 ## Melhorias necessárias
 
-- !repeat não funciona.
 - Erros na inserção de playlists pelo Spotify.
 - Suporte ao Deezer e Soundcloud.
-- Velocidade de download de musicas.
 
 ## Autores
 
