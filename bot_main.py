@@ -67,23 +67,38 @@ class MusicSource:
 async def play_next(ctx):
     if ctx.guild.id not in queues:
         return
-    
-    queue = queues[ctx.guild.id]
-    
-    if queue.repeat and queue.current:
-        queue.queue.insert(0, queue.current)
-    
-    if queue.queue:
-        queue.current = queue.queue.pop(0)
-        audio_source = queue.current.create_player()
+
+    queue_item = queues[ctx.guild.id]
+
+    if queue_item.loop and queue_item.current:
+        readded_song = await process_source(ctx, queue_item.current.url)
+        if readded_song:
+            if isinstance(readded_song, list):
+                queue_item.queue.append(readded_song[0])
+            else:
+                queue_item.queue.append(readded_song)
+
+    if len(queue_item.queue) > 0:
+        queue_item.current = queue_item.queue.pop(0)
         
+        if isinstance(queue_item.current, list):
+            remaining_songs = queue_item.current[1:]
+            queue_item.current = queue_item.current[0]
+            queue_item.queue.extend(remaining_songs)
+
+        audio_source = queue_item.current.create_player()
+
         def after_playing(error):
             if error:
                 print(f'Erro na reprodução: {error}')
             asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
-        
+
         ctx.voice_client.play(audio_source, after=after_playing)
-        await ctx.send(f'🎶 Tocando agora: **{queue.current.title}**')
+        await ctx.send(f'🎶 Tocando agora: **{queue_item.current.title}**')
+    else:
+        # A fila terminou e o loop não está ativo
+        queue_item.current = None
+        await ctx.send("⏹️ Fila de reprodução terminada.")
 
 async def process_source(ctx, url):
     voice_client = ctx.voice_client
@@ -247,9 +262,13 @@ async def resume(ctx):
 
 @bot.command()
 async def stop(ctx):
-    ctx.voice_client.stop()
-    queues[ctx.guild.id].queue.clear() 
-    await ctx.send("⏹️ Parado e limpou a fila")
+    if ctx.voice_client:
+        ctx.voice_client.stop()
+    if ctx.guild.id in queues:
+        queues[ctx.guild.id].queue.clear()
+        queues[ctx.guild.id].current = None
+        queues[ctx.guild.id].loop = False
+    await ctx.send("⏹️ Reprodução parada e fila limpa.")
     
 @bot.command()
 async def clear(ctx):
@@ -276,13 +295,14 @@ async def queue(ctx):
     await ctx.send("**Fila de reprodução:**\n" + "\n".join(items))
 
 @bot.command()
-async def repeat(ctx):
+async def loop(ctx):
     if ctx.guild.id not in queues:
         queues[ctx.guild.id] = QueueItem()
     
-    queues[ctx.guild.id].repeat = not queues[ctx.guild.id].repeat
-    status = 'ativado' if queues[ctx.guild.id].repeat else 'desativado'
-    await ctx.send(f"🔂 Repeat {status}")
+    queues[ctx.guild.id].loop = not queues[ctx.guild.id].loop
+    
+    status = 'ativado' if queues[ctx.guild.id].loop else 'desativado'
+    await ctx.send(f"🔁 Loop da fila {status}")
 
 @bot.command()
 async def shuffle(ctx):

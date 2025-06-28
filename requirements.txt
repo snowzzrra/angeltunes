@@ -1,0 +1,7 @@
+pynacl
+yt-dlp
+dotenv
+pytube
+discord.py
+spotipy
+ffmpeg
